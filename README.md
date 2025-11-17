@@ -173,19 +173,19 @@ See [INSTALLATION.md](INSTALLATION.md) for detailed setup instructions.
 ## 📈 Visualizations
 
 ### Dimensionality Reduction
-![UMAP Clustering](results/figures/clustering/umap_clusters.png)
+![UMAP Clustering](results/figures/clustering/umap_clusters.jpg)
 *UMAP projection showing 7 transcriptionally distinct clusters*
 
 ### Cell Type Annotation
-![Cell Type Distribution](results/figures/cell_types/celltype_barplot.png)
+![Cell Type Distribution](results/figures/cell_types/celltype_barplot.jpg)
 *Distribution of predicted cell types across clusters*
 
 ### Differential Expression
-![Marker Heatmap](results/figures/enrichment/marker_heatmap.png)
+![Marker Heatmap](results/figures/enrichment/marker_heatmap.jpg)
 *Heatmap of cluster-specific marker genes*
 
 ### Pathway Enrichment
-![GO Enrichment](results/figures/enrichment/go_biological_process.png)
+![GO Enrichment](results/figures/enrichment/go_biological_process.jpg)
 *Gene Ontology enrichment for cluster-specific genes*
 
 ---
