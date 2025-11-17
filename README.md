@@ -272,20 +272,19 @@ This project is licensed under the MIT License - see [LICENSE](LICENSE) file for
 
 **Fares Ibrahim**
 
-- GitHub: [@yourusername](https://github.com/yourusername)
-- Email: your.email@example.com
+- GitHub: [@Fares77-a11y](https://github.com/Fares77-a11y)
+- Email: Ibrahimfares825@gmail.com
 
 ---
 
 ## 🙏 Acknowledgments
 
-- Original tutorial framework: Kristoffer Nilsson Grimstad (University of Skövde, 2024)
 - Seurat development team (Satija Lab, New York Genome Center)
 - 10x Genomics for public dataset access
 - Bioconductor community for computational tools
 
 ---
 
-**Last Updated**: November 2024  
+**Last Updated**: November 2025  
 **Status**: Production-ready  
 **Version**: 1.0.0
