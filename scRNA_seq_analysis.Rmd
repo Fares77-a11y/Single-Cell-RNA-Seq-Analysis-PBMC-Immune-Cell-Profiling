@@ -1,0 +1,520 @@
+---
+title: "Single-Cell RNA-Seq Analysis - PBMC Dataset"
+author: "Fares Ibrahim"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    code_folding: show
+  pdf_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 10, fig.height = 6)
+```
+
+# Introduction
+
+This project demonstrates a comprehensive single-cell RNA sequencing (scRNA-seq) analysis workflow using the Seurat package in R. The dataset consists of **peripheral blood mononuclear cells (PBMCs)** from 10x Genomics, containing approximately 2,700 cells.
+
+The workflow includes:
+
+- Quality control and filtering
+- Normalization and scaling
+- Dimensionality reduction (PCA, t-SNE, UMAP)
+- Clustering
+- Cell type identification
+- Differential gene expression analysis
+
+---
+
+# 1. Setup and Installation
+
+## Required Packages
+
+Install required packages if not already installed:
+
+```{r install, eval=FALSE}
+# Install BiocManager
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+# Install Seurat (specific version for compatibility)
+install.packages("devtools")
+devtools::install_version("Seurat", version = "4.3.0")
+
+# Install other required packages
+BiocManager::install(c("org.Hs.eg.db"))
+install.packages(c("dplyr", "clustree", "ggplot2", "ggtree"))
+```
+
+---
+
+# 2. Load Libraries
+
+```{r libraries}
+library(Seurat)
+library(dplyr)
+library(clustree)
+library(ggplot2)
+```
+
+---
+
+# 3. Load Data
+
+**IMPORTANT:** Update the path below to your actual data directory containing the 10x files:
+- `barcodes.tsv`
+- `genes.tsv`
+- `matrix.mtx`
+
+```{r load-data}
+# Replace 'PATH-TO-FILES/' with your actual directory path
+# Example: "/Users/username/data/pbmc3k/" or "C:/Users/username/data/pbmc3k/"
+pbmc.data <- Read10X(data.dir = "C:/Users/Ibrah/Downloads/sc/Data/")
+
+# Create Seurat object with initial QC filters
+pbmc <- CreateSeuratObject(counts = pbmc.data, 
+                           project = "pbmc3k", 
+                           min.cells = 3, 
+                           min.features = 200)
+pbmc
+```
+
+The dataset contains **13,714 features** (genes) across **2,700 samples** (cells).
+
+---
+
+# 4. Quality Control
+
+## 4.1 Hemoglobin Content
+
+Check for red blood cell contamination:
+
+```{r qc-hemoglobin}
+pbmc[["percent.hb"]] <- PercentageFeatureSet(pbmc, pattern = "^HB[^(P)]")
+VlnPlot(pbmc, features = "percent.hb")
+```
+
+## 4.2 Mitochondrial and Ribosomal Content
+
+```{r qc-mito-ribo}
+pbmc[["percent.mito"]] <- PercentageFeatureSet(pbmc, pattern = "^MT-")
+pbmc[["percent.ribo"]] <- PercentageFeatureSet(pbmc, pattern = "^RP[SL]")
+VlnPlot(pbmc, features = c("percent.mito", "percent.ribo"), ncol = 2)
+```
+
+## 4.3 Correlation Analysis
+
+```{r qc-correlation}
+FeatureScatter(pbmc, feature1 = "percent.mito", feature2 = "percent.ribo")
+```
+
+## 4.4 Count and Feature Distributions
+
+```{r qc-counts}
+VlnPlot(pbmc, features = c("nCount_RNA", "nFeature_RNA"))
+```
+
+## 4.5 Filter Low-Quality Cells
+
+Apply QC thresholds:
+- **nCount_RNA:** 1,000 - 4,000
+- **nFeature_RNA:** 500 - 1,200
+- **percent.mito:** < 5%
+- **percent.ribo:** > 20%
+
+```{r filter}
+pbmc_filt <- subset(pbmc, 
+                    subset = nCount_RNA > 1000 & nCount_RNA < 4000 & 
+                             nFeature_RNA > 500 & nFeature_RNA < 1200 & 
+                             percent.mito < 5 & percent.ribo > 20)
+```
+
+---
+
+# 5. Pre-Processing
+
+## 5.1 Normalization
+
+```{r normalize}
+pbmc_filt <- NormalizeData(pbmc_filt, 
+                           normalization.method = "LogNormalize", 
+                           scale.factor = 10000)
+```
+
+## 5.2 Identify Highly Variable Genes (HVGs)
+
+```{r variable-features}
+pbmc_filt <- FindVariableFeatures(pbmc_filt, 
+                                  selection.method = "vst", 
+                                  nfeatures = 2000)
+
+# Identify top 10 HVGs
+pbmc.top10 <- head(VariableFeatures(pbmc_filt), 10)
+
+# Plot variable features
+plot1 <- VariableFeaturePlot(pbmc_filt)
+LabelPoints(plot = plot1, points = pbmc.top10, xnudge = 0, ynudge = 0, repel = TRUE)
+```
+
+## 5.3 Scale Data
+
+```{r scale}
+pbmc_filt <- ScaleData(pbmc_filt, features = rownames(pbmc_filt))
+```
+
+---
+
+# 6. Linear Dimensionality Reduction (PCA)
+
+## 6.1 Run PCA
+
+```{r pca}
+pbmc_filt <- RunPCA(object = pbmc_filt, 
+                    features = VariableFeatures(object = pbmc_filt))
+PCAPlot(pbmc_filt)
+```
+
+## 6.2 Determine Number of PCs
+
+```{r elbow}
+ElbowPlot(pbmc_filt, reduction = "pca", ndims = 50)
+```
+
+Based on the elbow plot, we select **10 PCs** for downstream analysis.
+
+## 6.3 Optional: JackStraw Plot
+
+**Note:** This is computationally intensive and may take several minutes.
+
+```{r jackstraw, eval=FALSE}
+pbmc_filt <- JackStraw(pbmc_filt, num.replicate = 100)
+pbmc_filt <- ScoreJackStraw(pbmc_filt, dims = 1:20)
+JackStrawPlot(pbmc_filt, dims = 1:20)
+```
+
+---
+
+# 7. Clustering
+
+## 7.1 Construct SNN Graph
+
+```{r neighbors}
+pbmc_filt <- FindNeighbors(object = pbmc_filt, dims = 1:10)
+```
+
+## 7.2 Test Multiple Resolutions
+
+```{r cluster-tree}
+res <- seq.int(0.1, 2.0, 0.1)
+for (i in res) {
+  pbmc_filt <- FindClusters(object = pbmc_filt, resolution = i)
+}
+
+# Visualize cluster stability
+clustree(pbmc_filt@meta.data, prefix = "RNA_snn_res.")
+```
+
+## 7.3 Set Final Resolution
+
+Based on the cluster tree, resolution **0.5** provides stable clusters.
+
+```{r final-clustering}
+pbmc_filt <- FindClusters(pbmc_filt, resolution = 0.5)
+```
+
+---
+
+# 8. Non-Linear Dimensionality Reduction
+
+## 8.1 t-SNE and UMAP
+
+```{r tsne-umap}
+set.seed(1001)  # For reproducibility
+
+pbmc_filt <- RunTSNE(pbmc_filt, dims = 1:10)
+pbmc_filt <- RunUMAP(object = pbmc_filt, dims = 1:10)
+
+# Plot side by side
+DimPlot(pbmc_filt, label = TRUE, reduction = "tsne") + 
+  DimPlot(pbmc_filt, label = TRUE, reduction = "umap")
+```
+
+---
+
+# 9. Cell Type Prediction
+
+## 9.1 Manual Annotation with Known Markers
+
+```{r manual-annotation}
+# Feature plots
+FeaturePlot(pbmc_filt, 
+            features = c("CD19", "CD3E", "CD14"), 
+            order = TRUE, 
+            cols = c("lightgrey", "red"), 
+            pt.size = 1.5, 
+            ncol = 3)
+
+# Violin plots - normalized data
+VlnPlot(pbmc_filt, features = c("CD19", "CD3E", "CD14"), ncol = 1)
+
+# Violin plots - raw counts
+VlnPlot(pbmc_filt, features = c("CD19", "CD3E", "CD14"), ncol = 1, slot = "counts")
+```
+
+**Interpretation:**
+- **CD19+** → B cells (Cluster 3)
+- **CD3E+** → T cells (Clusters 0, 1, 4, 5)
+- **CD14+** → Monocytes (Clusters 2, 6)
+
+## 9.2 Reference-Based Annotation
+
+**IMPORTANT:** Update the path to your reference dataset.
+
+```{r reference-annotation}
+# Load and prepare reference dataset
+# Replace with your actual path to reference.rds
+reference <- readRDS("C:/Users/Ibrah/Downloads/sc/Data/reference.rds")
+
+
+reference <- reference %>%
+  NormalizeData() %>%
+  FindVariableFeatures() %>%
+  ScaleData() %>%
+  RunPCA(verbose = FALSE) %>%
+  RunUMAP(dims = 1:10)
+
+DimPlot(reference, group.by = "cell_type", label = TRUE, repel = TRUE, reduction = "umap")
+
+# Transfer cell type annotations
+transfer.anchors <- FindTransferAnchors(reference = reference, 
+                                        query = pbmc_filt, 
+                                        dims = 1:10)
+predictions <- TransferData(anchorset = transfer.anchors, 
+                           refdata = reference$cell_type, 
+                           dims = 1:10)
+pbmc_filt <- AddMetaData(object = pbmc_filt, metadata = predictions)
+
+# Plot predicted cell types
+DimPlot(pbmc_filt, group.by = "predicted.id", label = TRUE, reduction = "umap")
+```
+
+## 9.3 Cell Type Distribution per Cluster
+
+```{r cell-type-distribution}
+ggplot(pbmc_filt@meta.data, aes(x = Idents(pbmc_filt), fill = predicted.id)) +
+  geom_bar() +
+  theme_classic() +
+  xlab("Cluster") +
+  ylab("Number of Cells")
+```
+
+---
+
+# 10. Differential Gene Expression Analysis
+
+## 10.1 Find All Markers
+
+```{r deg}
+degs <- FindAllMarkers(pbmc_filt, 
+                       only.pos = FALSE, 
+                       min.pct = 0.25, 
+                       logfc.threshold = 0.5)
+
+# Filter by adjusted p-value
+degs <- subset(degs, p_val_adj < 0.05)
+
+# Separate upregulated and downregulated DEGs
+up_degs <- subset(degs, avg_log2FC > 0.0)
+down_degs <- subset(degs, avg_log2FC < 0.0)
+```
+
+## 10.2 Heatmap of Upregulated DEGs
+
+```{r heatmap}
+DoHeatmap(pbmc_filt, 
+          features = up_degs$gene, 
+          raster = FALSE) + 
+  theme(axis.text.y = element_blank())
+```
+
+---
+
+# 11. Hierarchical Clustering
+
+```{r hierarchical}
+library(ggtree)
+
+tree <- BuildClusterTree(pbmc_filt, assay = "RNA")
+myphytree <- Tool(object = tree, slot = "BuildClusterTree")
+
+ggtree(myphytree) + 
+  geom_tiplab() + 
+  theme_tree() + 
+  xlim(NA, 500) + 
+  ggtitle("Hierarchical Clustering based on HVGs")
+```
+
+---
+
+# 11. Gene Set Over Representation Analysis
+## 11.1 Gene Ontology - Biological Process
+
+# Session Info
+
+```{r ORA}
+# Load additional libraries
+library(clusterProfiler)
+library(enrichplot)
+library(org.Hs.eg.db)
+
+# Extract upregulated DEGs for each cluster
+clust0 <- subset(up_degs, cluster == "0")
+up0 <- clust0$gene
+clust1 <- subset(up_degs, cluster == "1")
+up1 <- clust1$gene
+clust2 <- subset(up_degs, cluster == "2")
+up2 <- clust2$gene
+clust3 <- subset(up_degs, cluster == "3")
+up3 <- clust3$gene
+clust4 <- subset(up_degs, cluster == "4")
+up4 <- clust4$gene
+clust5 <- subset(up_degs, cluster == "5")
+up5 <- clust5$gene
+clust6 <- subset(up_degs, cluster == "6")
+up6 <- clust6$gene
+
+# Create list of gene symbols
+gene_symbols <- list(up0, up1, up2, up3, up4, up5, up6)
+names(gene_symbols) <- c("Cluster0", "Cluster1", "Cluster2", "Cluster3", "Cluster4", "Cluster5", "Cluster6")
+
+```
+
+
+```{r BP}
+# Gene Ontology - Biological Process
+bp <- compareCluster(geneCluster = gene_symbols, fun = "enrichGO", OrgDb = "org.Hs.eg.db", ont = "BP", keyType = "SYMBOL")
+dotplot(bp, showCategory = 10, font.size = 8.1) + ggtitle("Biological Process (GO)") + theme(plot.title = element_text(hjust = 0.5))
+
+```
+# 11.2 Gene Ontology - Cellular Component
+
+```{r CC}
+# Gene Ontology - Cellular Component
+cc <- compareCluster(geneCluster = gene_symbols, fun = "enrichGO", OrgDb = "org.Hs.eg.db", ont = "CC", keyType = "SYMBOL")
+dotplot(cc, showCategory = 10, font.size = 10) + ggtitle("Cellular Component (GO)") + theme(plot.title = element_text(hjust = 0.5))
+```
+# 11.3 Gene Ontology - Molecular Function
+
+```{r MF}
+# Gene Ontology - Molecular Function
+mf <- compareCluster(geneCluster = gene_symbols, fun = "enrichGO", OrgDb = "org.Hs.eg.db", ont = "MF", keyType = "SYMBOL")
+dotplot(mf, showCategory = 10, font.size = 10) + ggtitle("Molecular Function (GO)") + theme(plot.title = element_text(hjust = 0.5))
+
+```
+# 11.4 KEGG pathway analysis
+
+```{r KEGG}
+# Convert gene symbols to Entrez IDs for KEGG analysis
+temp <- select(org.Hs.eg.db, keys = gene_symbols$Cluster0, columns = c("ENTREZID"), keytype = "SYMBOL")
+c0 <- na.omit(unique(temp$ENTREZID))
+temp <- select(org.Hs.eg.db, keys = gene_symbols$Cluster1, columns = c("ENTREZID"), keytype = "SYMBOL")
+c1 <- na.omit(unique(temp$ENTREZID))
+temp <- select(org.Hs.eg.db, keys = gene_symbols$Cluster2, columns = c("ENTREZID"), keytype = "SYMBOL")
+c2 <- na.omit(unique(temp$ENTREZID))
+temp <- select(org.Hs.eg.db, keys = gene_symbols$Cluster3, columns = c("ENTREZID"), keytype = "SYMBOL")
+c3 <- na.omit(unique(temp$ENTREZID))
+temp <- select(org.Hs.eg.db, keys = gene_symbols$Cluster4, columns = c("ENTREZID"), keytype = "SYMBOL")
+c4 <- na.omit(unique(temp$ENTREZID))
+temp <- select(org.Hs.eg.db, keys = gene_symbols$Cluster5, columns = c("ENTREZID"), keytype = "SYMBOL")
+c5 <- na.omit(unique(temp$ENTREZID))
+temp <- select(org.Hs.eg.db, keys = gene_symbols$Cluster6, columns = c("ENTREZID"), keytype = "SYMBOL")
+c6 <- na.omit(unique(temp$ENTREZID))
+
+# Create list of Entrez IDs
+gene_entrez <- list(c0, c1, c2, c3, c4, c5, c6)
+names(gene_entrez) <- c("Cluster0", "Cluster1", "Cluster2", "Cluster3", "Cluster4", "Cluster5", "Cluster6")
+
+# KEGG pathway analysis
+kegg <- compareCluster(geneCluster = gene_entrez, fun = "enrichKEGG")
+dotplot(kegg, showCategory = 10, font.size = 10) + ggtitle("Pathways (KEGG)") + theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+# 12 SCTransform Workflow
+```{r SCTransform}
+# SCTransform Workflow
+# ======================================================================
+
+# Filter data (same as before)
+pbmc_sct <- subset(pbmc, subset = nCount_RNA > 1000 & nCount_RNA < 4000 & nFeature_RNA > 500 & nFeature_RNA < 1200 & percent.mito < 5 & percent.ribo > 20)
+
+# Run SCTransform (replaces normalization, scaling, and variable feature selection)
+pbmc_sct <- SCTransform(pbmc_sct, assay = "RNA", variable.features.n = 3000)
+
+
+```
+
+```{r PCA}
+# PCA
+pbmc_sct <- RunPCA(object = pbmc_sct, features = VariableFeatures(object = pbmc_sct))
+PCAPlot(pbmc_sct)
+ElbowPlot(pbmc_sct, reduction = "pca", ndims = 50)
+```
+
+```{r Clustering}
+# Clustering with more PCs (25 instead of 10)
+pbmc_sct <- FindNeighbors(object = pbmc_sct, dims = 1:25)
+
+# Test multiple resolutions
+res <- seq.int(0.1, 2.0, 0.1)
+for (i in res) {
+  pbmc_sct <- FindClusters(object = pbmc_sct, resolution = i)
+}
+clustree(pbmc_sct@meta.data, prefix = "SCT_snn_res.")
+
+# Set resolution
+pbmc_sct <- FindClusters(pbmc_sct, resolution = 0.7)
+```
+
+```{r UMAP}
+# UMAP
+pbmc_sct <- RunUMAP(object = pbmc_sct, dims = 1:25)
+DimPlot(pbmc_sct, label = TRUE)
+```
+# 13 Cell type prediction with SCT reference
+
+```{r Predict}
+# Cell type prediction with SCT reference
+reference_sct <- reference %>%
+  SCTransform() %>%
+  RunPCA(verbose = FALSE) %>%
+  RunUMAP(dims = 1:25)
+
+transfer.anchors <- FindTransferAnchors(reference = reference_sct, query = pbmc_sct, dims = 1:25)
+predictions <- TransferData(anchorset = transfer.anchors, refdata = reference_sct$cell_type, dims = 1:25)
+pbmc_sct <- AddMetaData(object = pbmc_sct, metadata = predictions)
+
+DimPlot(pbmc_sct, group.by = "predicted.id", label = TRUE, reduction = "umap", repel = TRUE) + DimPlot(pbmc_sct, label = TRUE)
+```
+
+```{r markers}
+# Cell type distribution
+ggplot(pbmc_sct@meta.data, aes(x = Idents(pbmc_sct), fill = predicted.id)) +
+  geom_bar() +
+  theme_classic() +
+  xlab("Cluster") +
+  ylab("Number of Cells")
+
+# Check specific markers
+VlnPlot(pbmc_sct, features = c("GZMK", "CCR7"), ncol = 2)
+```
+
+```{r session-info}
+
+sessionInfo()
+```
